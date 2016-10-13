@@ -571,6 +571,10 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 		return
 	}
 
+	if 0 == rtt {
+		return
+	}
+
 	p.mu.Lock()
 	delete(p.sent, addr)
 	if len(p.sent) == 0 && !p.done {
