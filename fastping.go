@@ -125,6 +125,11 @@ type Pinger struct {
 	mu      sync.Mutex
 	done    bool
 
+	// Chunk is number of pings to send before sleep
+	Chunk int
+	// Sleep duration between sending chunks
+	Sleep time.Duration
+
 	// Size in bytes of the payload to send
 	Size int
 	// Number of (nano,milli)seconds of an idle timeout. Once it passed,
@@ -468,8 +473,20 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 		go sendPacket(addrs, results)
 	}
 
-	for _, addr := range p.addrs {
-		addrs <- addr
+	if p.Chunk > 0 {
+		counter := 0
+		for _, addr := range p.addrs {
+			addrs <- addr
+			counter++
+			if counter == p.Chunk {
+				counter = 0
+				time.Sleep(p.Sleep)
+			}
+		}
+	} else {
+		for _, addr := range p.addrs {
+			addrs <- addr
+		}
 	}
 
 	close(addrs)
