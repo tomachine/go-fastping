@@ -44,6 +44,7 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -114,8 +115,11 @@ type Pinger struct {
 	id  int
 	seq int
 	// key string is IPAddr.String()
-	addrs   map[string]*net.IPAddr
-	sent    map[string]*net.IPAddr
+	addrs map[string]*net.IPAddr
+	//	sent    map[string]*net.IPAddr
+	index   map[string]int
+	state   []int64
+	counter int32
 	network string
 	source  string
 	source6 string
@@ -136,11 +140,8 @@ type Pinger struct {
 	// the library calls an idle callback function. It is also used for an
 	// interval time of RunLoop() method
 	MaxRTT time.Duration
-	// OnRecv is called with a response packet's source address and its
-	// elapsed time when Pinger receives a response packet.
-	OnRecv func(*net.IPAddr, time.Duration)
 	// OnIdle is called when MaxRTT time passed
-	OnIdle func(map[string]*net.IPAddr)
+	OnFinish func(map[string]int, []int64)
 	// NumGoroutines defines how many goroutines are used when sending ICMP
 	// packets and receiving IPv4/IPv6 ICMP responses. Its default is
 	// runtime.NumCPU().
@@ -154,6 +155,7 @@ func NewPinger() *Pinger {
 		id:            rand.Intn(0xffff),
 		seq:           rand.Intn(0xffff),
 		addrs:         make(map[string]*net.IPAddr),
+		index:         make(map[string]int),
 		network:       "ip",
 		source:        "",
 		source6:       "",
@@ -161,8 +163,7 @@ func NewPinger() *Pinger {
 		hasIPv6:       false,
 		Size:          TimeSliceLength,
 		MaxRTT:        time.Second,
-		OnRecv:        nil,
-		OnIdle:        nil,
+		OnFinish:      nil,
 		NumGoroutines: runtime.NumCPU(),
 	}
 }
@@ -223,7 +224,15 @@ func (p *Pinger) AddIP(ipaddr string) error {
 	if addr == nil {
 		return fmt.Errorf("%s is not a valid textual representation of an IP address", ipaddr)
 	}
-	p.addrs[addr.String()] = &net.IPAddr{IP: addr}
+	addrStr := addr.String()
+
+	if _, ok := p.addrs[addrStr]; ok {
+		return nil
+	}
+
+	p.addrs[addrStr] = &net.IPAddr{IP: addr}
+	p.index[addrStr] = len(p.addrs)
+
 	if isIPv4(addr) {
 		p.hasIPv4 = true
 	} else if isIPv6(addr) {
@@ -235,66 +244,20 @@ func (p *Pinger) AddIP(ipaddr string) error {
 // AddIPAddr adds an IP address to Pinger. ip arg should be a net.IPAddr
 // pointer.
 func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
-	p.addrs[ip.String()] = ip
+	addrStr := ip.String()
+
+	if _, ok := p.addrs[addrStr]; ok {
+		return
+	}
+
+	p.addrs[addrStr] = ip
+	p.index[addrStr] = len(p.addrs)
+
 	if isIPv4(ip.IP) {
 		p.hasIPv4 = true
 	} else if isIPv6(ip.IP) {
 		p.hasIPv6 = true
 	}
-}
-
-// RemoveIP removes an IP address from Pinger. ipaddr arg should be a string
-// like "192.0.2.1".
-func (p *Pinger) RemoveIP(ipaddr string) error {
-	addr := net.ParseIP(ipaddr)
-	if addr == nil {
-		return fmt.Errorf("%s is not a valid textual representation of an IP address", ipaddr)
-	}
-	delete(p.addrs, addr.String())
-	return nil
-}
-
-// RemoveIPAddr removes an IP address from Pinger. ip arg should be a net.IPAddr
-// pointer.
-func (p *Pinger) RemoveIPAddr(ip *net.IPAddr) {
-	delete(p.addrs, ip.String())
-}
-
-// AddHandler adds event handler to Pinger. event arg should be "receive" or
-// "idle" string.
-//
-// **CAUTION** This function is deprecated. Please use OnRecv and OnIdle field
-// of Pinger struct to set following handlers.
-//
-// "receive" handler should be
-//
-//	func(addr *net.IPAddr, rtt time.Duration)
-//
-// type function. The handler is called with a response packet's source address
-// and its elapsed time when Pinger receives a response packet.
-//
-// "idle" handler should be
-//
-//	func()
-//
-// type function. The handler is called when MaxRTT time passed. For more
-// detail, please see Run() and RunLoop().
-func (p *Pinger) AddHandler(event string, handler interface{}) error {
-	switch event {
-	case "receive":
-		if hdl, ok := handler.(func(*net.IPAddr, time.Duration)); ok {
-			p.OnRecv = hdl
-			return nil
-		}
-		return errors.New("receive event handler should be `func(*net.IPAddr, time.Duration)`")
-	case "idle":
-		if hdl, ok := handler.(func(map[string]*net.IPAddr)); ok {
-			p.OnIdle = hdl
-			return nil
-		}
-		return errors.New("idle event handler should be `func()`")
-	}
-	return errors.New("No such event: " + event)
 }
 
 // Run invokes a single send/receive procedure. It sends packets to all hosts
@@ -319,6 +282,8 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 }
 
 func (p *Pinger) run() {
+	p.state = make([]int64, len(p.addrs))
+
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {
 		if conn = p.listen(ipv4Proto[p.network], p.source); conn == nil {
@@ -372,8 +337,8 @@ func (p *Pinger) run() {
 
 	close(p.ctx.done)
 
-	if p.OnIdle != nil {
-		p.OnIdle(p.sent)
+	if p.OnFinish != nil {
+		p.OnFinish(p.index, p.state)
 	}
 }
 
@@ -385,7 +350,6 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 
 	p.id = rand.Intn(0xffff)
 	p.seq = rand.Intn(0xffff)
-	p.sent = make(map[string]*net.IPAddr)
 
 	addrs := make(chan *net.IPAddr)
 	results := make(chan sendResult, 1)
@@ -446,9 +410,8 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 
 			// pre-add ip to sent
 			addrString := addr.String()
-			p.mu.Lock()
-			p.sent[addrString] = addr
-			p.mu.Unlock()
+			p.state[p.index[addrString]] = -1
+			atomic.AddInt32(&p.counter, 1)
 
 			for {
 				if _, err := cn.WriteTo(bytes, dst); err != nil {
@@ -457,9 +420,8 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 							continue
 						} else {
 							// remove ip from `sent` list if not ok
-							p.mu.Lock()
-							delete(p.sent, addrString)
-							p.mu.Unlock()
+							p.state[p.index[addrString]] = -2
+							atomic.AddInt32(&p.counter, -1)
 						}
 					}
 				}
@@ -522,7 +484,8 @@ func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGrou
 				} else {
 					// prevent 2x close in different threads
 					p.mu.Lock()
-					if ctx.err == nil {
+					if ctx.err == nil && !p.done {
+						p.done = true
 						close(ctx.done)
 					}
 					ctx.err = err
@@ -548,9 +511,7 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 	}
 
 	addr := ipaddr.String()
-	p.mu.Lock()
 	_, ok := p.addrs[addr]
-	p.mu.Unlock()
 
 	if !ok {
 		return
@@ -592,15 +553,16 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 		return
 	}
 
-	p.mu.Lock()
-	delete(p.sent, addr)
-	if len(p.sent) == 0 && !p.done {
-		p.done = true
-		close(ctx.done)
-	}
-	p.mu.Unlock()
+	current := atomic.AddInt32(&p.counter, -1)
+	p.state[p.index[addr]] = int64(rtt)
 
-	if p.OnRecv != nil {
-		p.OnRecv(ipaddr, rtt)
+	if 0 == current {
+		p.mu.Lock()
+		if !p.done {
+			p.done = true
+			close(ctx.done)
+		}
+
+		p.mu.Unlock()
 	}
 }
