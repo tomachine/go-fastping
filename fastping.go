@@ -353,20 +353,10 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 	p.seq = rand.Intn(0xffff)
 
 	addrs := make(chan *net.IPAddr)
-	results := make(chan sendResult, 1)
-	errors := make(chan []error)
-
-	collectErrors := func(results <-chan sendResult, errors chan<- []error) {
-		var errs []error
-		for r := range results {
-			errs = append(errs, r.err)
-		}
-		errors <- errs
-	}
-	go collectErrors(results, errors)
+	results := make(chan error, p.NumGoroutines)
 
 	wg := new(sync.WaitGroup)
-	sendPacket := func(addrs <-chan *net.IPAddr, results chan<- sendResult) {
+	sendPacket := func(addrs <-chan *net.IPAddr, results chan<- error) {
 		defer wg.Done()
 
 		for addr := range addrs {
@@ -400,7 +390,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 			}).Marshal(nil)
 
 			if err != nil {
-				results <- sendResult{addr: nil, err: err}
+				results <- err
 				return
 			}
 
@@ -451,12 +441,14 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 
 	close(addrs)
 	wg.Wait()
-	close(results)
-	errs := <-errors
 
-	if len(errs) > 0 {
-		return errs[0]
+	defer close(results)
+	select {
+	case err := <-results:
+		return err
+	default:
 	}
+
 	return nil
 }
 
