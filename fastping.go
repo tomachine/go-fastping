@@ -140,8 +140,6 @@ type Pinger struct {
 	// the library calls an idle callback function. It is also used for an
 	// interval time of RunLoop() method
 	MaxRTT time.Duration
-	// OnIdle is called when MaxRTT time passed
-	OnFinish func(map[string]int, []int64)
 	// NumGoroutines defines how many goroutines are used when sending ICMP
 	// packets and receiving IPv4/IPv6 ICMP responses. Its default is
 	// runtime.NumCPU().
@@ -163,7 +161,6 @@ func NewPinger() *Pinger {
 		hasIPv6:       false,
 		Size:          TimeSliceLength,
 		MaxRTT:        time.Second,
-		OnFinish:      nil,
 		NumGoroutines: runtime.NumCPU(),
 	}
 }
@@ -265,10 +262,16 @@ func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
 // it receives a response, it calls "receive" handler registered by AddHander().
 // After MaxRTT seconds, it calls "idle" handler and returns to caller with
 // an error value. It means it blocks until MaxRTT seconds passed.
-func (p *Pinger) Run() error {
+func (p *Pinger) Run() (map[string]time.Duration, error) {
 	p.ctx = newContext()
 	p.run()
-	return p.ctx.err
+
+	result := make(map[string]time.Duration, len(p.addrs))
+	for ip, index := range p.index {
+		result[ip] = time.Duration(p.state[index])
+	}
+
+	return result, p.ctx.err
 }
 
 func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
@@ -319,13 +322,13 @@ func (p *Pinger) run() {
 		}
 	}
 
-	err := p.sendICMP(conn, conn6)
+	p.sendICMP(conn, conn6)
 
 	ticker := time.NewTicker(p.MaxRTT)
 
 	select {
 	case <-recvCtx.done:
-		err = recvCtx.err
+		p.ctx.err = recvCtx.err
 	case <-ticker.C:
 	}
 
@@ -334,16 +337,10 @@ func (p *Pinger) run() {
 	close(recvCtx.stop)
 	wg.Wait()
 
-	p.ctx.err = err
-
 	close(p.ctx.done)
-
-	if p.OnFinish != nil {
-		p.OnFinish(p.index, p.state)
-	}
 }
 
-func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
+func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) {
 	type sendResult struct {
 		addr *net.IPAddr
 		err  error
@@ -353,10 +350,10 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 	p.seq = rand.Intn(0xffff)
 
 	addrs := make(chan *net.IPAddr)
-	results := make(chan error, p.NumGoroutines)
+	// results := make(chan error, p.NumGoroutines)
 
 	wg := new(sync.WaitGroup)
-	sendPacket := func(addrs <-chan *net.IPAddr, results chan<- error) {
+	sendPacket := func(addrs <-chan *net.IPAddr) {
 		defer wg.Done()
 
 		for addr := range addrs {
@@ -389,9 +386,9 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 				},
 			}).Marshal(nil)
 
+			// this is almost impossible
 			if err != nil {
-				results <- err
-				return
+				continue
 			}
 
 			var dst net.Addr = addr
@@ -420,7 +417,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 
 	wg.Add(p.NumGoroutines)
 	for i := 0; i < p.NumGoroutines; i++ {
-		go sendPacket(addrs, results)
+		go sendPacket(addrs)
 	}
 
 	if p.Chunk > 0 {
@@ -441,15 +438,6 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 
 	close(addrs)
 	wg.Wait()
-
-	defer close(results)
-	select {
-	case err := <-results:
-		return err
-	default:
-	}
-
-	return nil
 }
 
 func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGroup) {
