@@ -283,6 +283,7 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 
 func (p *Pinger) run() {
 	p.state = make([]int64, len(p.addrs))
+	p.counter = int32(len(p.addrs))
 
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {
@@ -411,20 +412,17 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) error {
 			// pre-add ip to sent
 			addrString := addr.String()
 			p.state[p.index[addrString]] = -1
-			atomic.AddInt32(&p.counter, 1)
 
 			for {
 				if _, err := cn.WriteTo(bytes, dst); err != nil {
 					if neterr, ok := err.(*net.OpError); ok {
 						if neterr.Err == syscall.ENOBUFS {
 							continue
-						} else {
-							// remove ip from `sent` list if not ok
-							p.state[p.index[addrString]] = -2
-							atomic.AddInt32(&p.counter, -1)
 						}
 					}
 				}
+				p.state[p.index[addrString]] = -2
+				atomic.AddInt32(&p.counter, -1)
 				break
 			}
 		}
