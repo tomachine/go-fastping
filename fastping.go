@@ -349,8 +349,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) {
 	p.id = rand.Intn(0xffff)
 	p.seq = rand.Intn(0xffff)
 
-	addrs := make(chan *net.IPAddr)
-	// results := make(chan error, p.NumGoroutines)
+	addrs := make(chan *net.IPAddr, p.NumGoroutines)
 
 	wg := new(sync.WaitGroup)
 	sendPacket := func(addrs <-chan *net.IPAddr) {
