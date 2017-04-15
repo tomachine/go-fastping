@@ -227,8 +227,8 @@ func (p *Pinger) AddIP(ipaddr string) error {
 		return nil
 	}
 
-	p.addrs[addrStr] = &net.IPAddr{IP: addr}
 	p.index[addrStr] = len(p.addrs)
+	p.addrs[addrStr] = &net.IPAddr{IP: addr}
 
 	if isIPv4(addr) {
 		p.hasIPv4 = true
@@ -247,8 +247,8 @@ func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
 		return
 	}
 
-	p.addrs[addrStr] = ip
 	p.index[addrStr] = len(p.addrs)
+	p.addrs[addrStr] = ip
 
 	if isIPv4(ip.IP) {
 		p.hasIPv4 = true
