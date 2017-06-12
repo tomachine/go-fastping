@@ -278,7 +278,7 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 	conn, err := icmp.ListenPacket(netProto, source)
 	if err != nil {
 		p.ctx.err = err
-		close(p.ctx.done)
+		p.ctx.done <- true
 		return nil
 	}
 	return conn
