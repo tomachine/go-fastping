@@ -262,9 +262,9 @@ func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
 // it receives a response, it calls "receive" handler registered by AddHander().
 // After MaxRTT seconds, it calls "idle" handler and returns to caller with
 // an error value. It means it blocks until MaxRTT seconds passed.
-func (p *Pinger) Run() (map[string]time.Duration, error) {
+func (p *Pinger) Run(skip map[string]bool) (map[string]time.Duration, error) {
 	p.ctx = newContext()
-	p.run()
+	p.run(skip)
 
 	result := make(map[string]time.Duration, len(p.addrs))
 	for ip, index := range p.index {
@@ -284,7 +284,7 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 	return conn
 }
 
-func (p *Pinger) run() {
+func (p *Pinger) run(skip map[string]bool) {
 	p.state = make([]int64, len(p.addrs))
 	p.counter = int32(len(p.addrs))
 
@@ -322,7 +322,7 @@ func (p *Pinger) run() {
 		}
 	}
 
-	p.sendICMP(conn, conn6)
+	p.sendICMP(conn, conn6, skip)
 
 	ticker := time.NewTicker(p.MaxRTT)
 
@@ -340,7 +340,7 @@ func (p *Pinger) run() {
 	close(p.ctx.done)
 }
 
-func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) {
+func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 	type sendResult struct {
 		addr *net.IPAddr
 		err  error
@@ -422,6 +422,9 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) {
 	if p.Chunk > 0 {
 		counter := 0
 		for _, addr := range p.addrs {
+			if nil != skip && skip[addr.String()] {
+				continue
+			}
 			addrs <- addr
 			counter++
 			if counter == p.Chunk {
@@ -431,6 +434,9 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn) {
 		}
 	} else {
 		for _, addr := range p.addrs {
+			if nil != skip && skip[addr.String()] {
+				continue
+			}
 			addrs <- addr
 		}
 	}
