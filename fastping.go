@@ -337,7 +337,12 @@ func (p *Pinger) run(skip map[string]bool) {
 	close(recvCtx.stop)
 	wg.Wait()
 
-	close(p.ctx.done)
+	p.mu.Lock()
+	if !p.done {
+		p.done = true
+		close(p.ctx.done)
+	}
+	p.mu.Unlock()
 }
 
 func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
