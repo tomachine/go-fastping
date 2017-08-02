@@ -2,7 +2,6 @@ package fastping
 
 import (
 	"net"
-	"sync"
 	"testing"
 	"time"
 )
@@ -22,7 +21,7 @@ func TestSource(t *testing.T) {
 		origSource, err := p.Source(tt.firstAddr)
 		if tt.invalid {
 			if err == nil {
-				t.Errorf("[%d] Source should return an error but nothing: %v", i)
+				t.Errorf("[%d] Source should return an error but nothing: %v", i, err)
 			}
 			continue
 		}
@@ -84,7 +83,7 @@ func TestAddIP(t *testing.T) {
 	}
 	for _, tt := range addIPTests {
 		if tt.expect {
-			if !p.addrs[tt.host].IP.Equal(tt.addr.IP) {
+			if !p.paddr[p.index[tt.host]].IP.Equal(tt.addr.IP) {
 				t.Errorf("AddIP didn't save IPAddr: %v", tt.host)
 			}
 		}
@@ -101,7 +100,7 @@ func TestAddIPAddr(t *testing.T) {
 
 	for i, tt := range addIPAddrTests {
 		p.AddIPAddr(tt)
-		if !p.addrs[tt.String()].IP.Equal(tt.IP) {
+		if !p.paddr[p.index[tt.String()]].IP.Equal(tt.IP) {
 			t.Errorf("[%d] AddIPAddr didn't save IPAddr: %v", i, tt.IP)
 		}
 		if len(tt.IP.To4()) == net.IPv4len {
@@ -115,44 +114,6 @@ func TestAddIPAddr(t *testing.T) {
 		} else {
 			t.Errorf("[%d] AddIPAddr encounted an unexpected error", i)
 		}
-	}
-}
-
-func TestRemoveIP(t *testing.T) {
-	p := NewPinger()
-
-	if err := p.AddIP("127.0.0.1"); err != nil {
-		t.Fatalf("AddIP failed: %v", err)
-	}
-	if len(p.addrs) != 1 {
-		t.Fatalf("AddIP length check failed")
-	}
-
-	if err := p.RemoveIP("127.0"); err == nil {
-		t.Fatal("RemoveIP, invalid IP should fail")
-	}
-
-	if err := p.RemoveIP("127.0.0.1"); err != nil {
-		t.Fatalf("RemoveIP failed: %v", err)
-	}
-	if len(p.addrs) != 0 {
-		t.Fatalf("RemoveIP length check failed")
-	}
-}
-
-func TestRemoveIPAddr(t *testing.T) {
-	p := NewPinger()
-
-	if err := p.AddIP("127.0.0.1"); err != nil {
-		t.Fatalf("AddIP failed: %v", err)
-	}
-	if len(p.addrs) != 1 {
-		t.Fatalf("AddIP length check failed")
-	}
-
-	p.RemoveIPAddr(&net.IPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if len(p.addrs) != 0 {
-		t.Fatalf("RemoveIPAddr length check failed")
 	}
 }
 
@@ -173,32 +134,16 @@ func TestRun(t *testing.T) {
 			t.Fatalf("AddIP failed: %v", err)
 		}
 
+		result, err := p.Run(map[string]bool{})
+
 		found1, found100, foundv6 := false, false, false
-		called, idle := false, false
-		p.OnRecv = func(ip *net.IPAddr, d time.Duration) {
-			called = true
-			if ip.String() == "127.0.0.1" {
-				found1 = true
-			} else if ip.String() == "127.0.0.100" {
-				found100 = true
-			} else if ip.String() == "::1" {
-				foundv6 = true
-			}
-		}
 
-		p.OnIdle = func(_ map[string]*net.IPAddr) {
-			idle = true
-		}
+		_, found1 = result["127.0.0.1"]
+		_, found100 = result["127.0.0.100"]
+		_, foundv6 = result["::1"]
 
-		err := p.Run()
 		if err != nil {
 			t.Fatalf("Pinger returns error: %v", err)
-		}
-		if !called {
-			t.Fatalf("Pinger didn't get any responses")
-		}
-		if !idle {
-			t.Fatalf("Pinger didn't call OnIdle function")
 		}
 		if !found1 {
 			t.Fatalf("Pinger `127.0.0.1` didn't respond")
@@ -211,94 +156,6 @@ func TestRun(t *testing.T) {
 		}
 	}
 }
-
-func TestMultiRun(t *testing.T) {
-	for _, network := range []string{"ip", "udp"} {
-		p1 := NewPinger()
-		p1.Network(network)
-		p2 := NewPinger()
-		p2.Network(network)
-
-		if err := p1.AddIP("127.0.0.1"); err != nil {
-			t.Fatalf("AddIP 1 failed: %v", err)
-		}
-
-		if err := p2.AddIP("127.0.0.1"); err != nil {
-			t.Fatalf("AddIP 2 failed: %v", err)
-		}
-
-		var mu sync.Mutex
-		res1 := 0
-		p1.OnRecv = func(*net.IPAddr, time.Duration) {
-			mu.Lock()
-			res1++
-			mu.Unlock()
-		}
-
-		res2 := 0
-		p2.OnRecv = func(*net.IPAddr, time.Duration) {
-			mu.Lock()
-			res2++
-			mu.Unlock()
-		}
-
-		p1.MaxRTT, p2.MaxRTT = time.Millisecond*100, time.Millisecond*100
-
-		if err := p1.Run(); err != nil {
-			t.Fatalf("Pinger 1 returns error: %v", err)
-		}
-		if res1 == 0 {
-			t.Fatalf("Pinger 1 didn't get any responses")
-		}
-		if res2 > 0 {
-			t.Fatalf("Pinger 2 got response")
-		}
-
-		res1, res2 = 0, 0
-		if err := p2.Run(); err != nil {
-			t.Fatalf("Pinger 2 returns error: %v", err)
-		}
-		if res1 > 0 {
-			t.Fatalf("Pinger 1 got response")
-		}
-		if res2 == 0 {
-			t.Fatalf("Pinger 2 didn't get any responses")
-		}
-
-		res1, res2 = 0, 0
-		errch1, errch2 := make(chan error), make(chan error)
-		go func(ch chan error) {
-			err := p1.Run()
-			if err != nil {
-				ch <- err
-			}
-		}(errch1)
-		go func(ch chan error) {
-			err := p2.Run()
-			if err != nil {
-				ch <- err
-			}
-		}(errch2)
-		ticker := time.NewTicker(time.Millisecond * 200)
-		select {
-		case err := <-errch1:
-			t.Fatalf("Pinger 1 returns error: %v", err)
-		case err := <-errch2:
-			t.Fatalf("Pinger 2 returns error: %v", err)
-		case <-ticker.C:
-			break
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if res1 != 1 {
-			t.Fatalf("Pinger 1 didn't get correct response")
-		}
-		if res2 != 1 {
-			t.Fatalf("Pinger 2 didn't get correct response")
-		}
-	}
-}
-
 
 func TestListen(t *testing.T) {
 	noSource := ""
@@ -364,7 +221,7 @@ func TestTimeToBytesToTime(t *testing.T) {
 
 func TestPayloadSizeDefault(t *testing.T) {
 	s := timeToBytes(time.Now())
-	d := append(s, make([]byte,8-TimeSliceLength)...)
+	d := append(s, make([]byte, 8-TimeSliceLength)...)
 
 	if len(d) != 8 {
 		t.Errorf("Payload size incorrect: got %d, expected: %d", len(d), 8)
@@ -373,7 +230,7 @@ func TestPayloadSizeDefault(t *testing.T) {
 
 func TestPayloadSizeCustom(t *testing.T) {
 	s := timeToBytes(time.Now())
-	d := append(s, make([]byte,64-TimeSliceLength)...)
+	d := append(s, make([]byte, 64-TimeSliceLength)...)
 
 	if len(d) != 64 {
 		t.Errorf("Payload size incorrect: got %d, expected: %d", len(d), 64)

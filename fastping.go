@@ -115,9 +115,11 @@ type Pinger struct {
 	id  int
 	seq int
 	// key string is IPAddr.String()
-	addrs map[string]*net.IPAddr
+	// addrs map[string]*net.IPAddr
 	//	sent    map[string]*net.IPAddr
 	index   map[string]int
+	paddr   []*net.IPAddr
+	pstring []string
 	state   []int64
 	counter int32
 	network string
@@ -150,9 +152,10 @@ type Pinger struct {
 func NewPinger() *Pinger {
 	rand.Seed(time.Now().UnixNano())
 	return &Pinger{
-		id:            rand.Intn(0xffff),
-		seq:           rand.Intn(0xffff),
-		addrs:         make(map[string]*net.IPAddr),
+		id:  rand.Intn(0xffff),
+		seq: rand.Intn(0xffff),
+		// addrs:         make(map[string]*net.IPAddr),
+		paddr:         []*net.IPAddr{},
 		index:         make(map[string]int),
 		network:       "ip",
 		source:        "",
@@ -223,12 +226,13 @@ func (p *Pinger) AddIP(ipaddr string) error {
 	}
 	addrStr := addr.String()
 
-	if _, ok := p.addrs[addrStr]; ok {
+	if _, ok := p.index[addrStr]; ok {
 		return nil
 	}
 
-	p.index[addrStr] = len(p.addrs)
-	p.addrs[addrStr] = &net.IPAddr{IP: addr}
+	p.index[addrStr] = len(p.paddr)
+	p.paddr = append(p.paddr, &net.IPAddr{IP: addr})
+	p.pstring = append(p.pstring, addrStr)
 
 	if isIPv4(addr) {
 		p.hasIPv4 = true
@@ -243,12 +247,13 @@ func (p *Pinger) AddIP(ipaddr string) error {
 func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
 	addrStr := ip.String()
 
-	if _, ok := p.addrs[addrStr]; ok {
+	if _, ok := p.index[addrStr]; ok {
 		return
 	}
 
-	p.index[addrStr] = len(p.addrs)
-	p.addrs[addrStr] = ip
+	p.index[addrStr] = len(p.paddr)
+	p.paddr = append(p.paddr, ip)
+	p.pstring = append(p.pstring, addrStr)
 
 	if isIPv4(ip.IP) {
 		p.hasIPv4 = true
@@ -266,7 +271,7 @@ func (p *Pinger) Run(skip map[string]bool) (map[string]time.Duration, error) {
 	p.ctx = newContext()
 	p.run(skip)
 
-	result := make(map[string]time.Duration, len(p.addrs))
+	result := make(map[string]time.Duration, len(p.index))
 	for ip, index := range p.index {
 		result[ip] = time.Duration(p.state[index])
 	}
@@ -285,8 +290,8 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 }
 
 func (p *Pinger) run(skip map[string]bool) {
-	p.state = make([]int64, len(p.addrs))
-	p.counter = int32(len(p.addrs))
+	p.state = make([]int64, len(p.index))
+	p.counter = int32(len(p.index))
 
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {
@@ -354,13 +359,22 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 	p.id = rand.Intn(0xffff)
 	p.seq = rand.Intn(0xffff)
 
-	addrs := make(chan *net.IPAddr, p.NumGoroutines)
-
 	wg := new(sync.WaitGroup)
-	sendPacket := func(addrs <-chan *net.IPAddr) {
+
+	sendPacket := func(from, to, chunk int) {
 		defer wg.Done()
 
-		for addr := range addrs {
+		for i := from; i < to; i++ {
+			if (chunk > 0) && (((i - from) % chunk) == 0) {
+				time.Sleep(p.Sleep)
+			}
+
+			if skip[p.pstring[i]] {
+				continue
+			}
+
+			addr := p.paddr[i]
+
 			var typ icmp.Type
 			var cn *icmp.PacketConn
 			if isIPv4(addr.IP) {
@@ -401,8 +415,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 			}
 
 			// pre-add ip to sent
-			addrString := addr.String()
-			p.state[p.index[addrString]] = -1
+			p.state[i] = -1
 
 			for {
 				if _, err := cn.WriteTo(bytes, dst); err != nil {
@@ -412,42 +425,35 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 						}
 					}
 				}
-				p.state[p.index[addrString]] = -2
+				p.state[i] = -2
 				atomic.AddInt32(&p.counter, -1)
 				break
 			}
 		}
 	}
 
-	wg.Add(p.NumGoroutines)
-	for i := 0; i < p.NumGoroutines; i++ {
-		go sendPacket(addrs)
-	}
+	total := len(p.index)
 
-	if p.Chunk > 0 {
-		counter := 0
-		for _, addr := range p.addrs {
-			if nil != skip && skip[addr.String()] {
-				continue
+	if total > (p.NumGoroutines * 8) {
+
+		step := total/p.NumGoroutines + 1
+		chunk := p.Chunk/p.NumGoroutines + 1
+
+		wg.Add(p.NumGoroutines)
+		for i := 0; i < total; i += step {
+			to := i + step
+			if to > total {
+				to = total
 			}
-			addrs <- addr
-			counter++
-			if counter == p.Chunk {
-				counter = 0
-				time.Sleep(p.Sleep)
-			}
+			go sendPacket(i, to, chunk)
 		}
+
+		wg.Wait()
 	} else {
-		for _, addr := range p.addrs {
-			if nil != skip && skip[addr.String()] {
-				continue
-			}
-			addrs <- addr
-		}
+		wg.Add(1)
+		sendPacket(0, total, p.Chunk)
 	}
 
-	close(addrs)
-	wg.Wait()
 }
 
 func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGroup) {
@@ -499,7 +505,7 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 	}
 
 	addr := ipaddr.String()
-	_, ok := p.addrs[addr]
+	_, ok := p.index[addr]
 
 	if !ok {
 		return
