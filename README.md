@@ -1,6 +1,14 @@
 go-fastping
 ===========
 
+WARNING: this is thread-unsafe fork of original https://github.com/tatsushid/go-fastping with
+many changes (limit usage of locks, channels, send packets in chunks and many
+other).
+
+In common cases please use original version.
+
+---
+
 go-fastping is a Go language's ICMP ping library inspired by AnyEvent::FastPing
 Perl module to send ICMP ECHO REQUEST packets quickly. Original Perl module is
 available at
@@ -8,11 +16,9 @@ http://search.cpan.org/~mlehmann/AnyEvent-FastPing-2.01/
 
 It hasn't been fully implemented original functions yet.
 
-[![GoDoc](https://godoc.org/github.com/tatsushid/go-fastping?status.svg)](https://godoc.org/github.com/tatsushid/go-fastping)
-
 ## Installation
 
-Install and update this go package with `go get -u github.com/tatsushid/go-fastping`
+Install and update this go package with `go get -u github.com/kanocz/go-fastping`
 
 ## Examples
 
@@ -20,28 +26,18 @@ Import this package and write
 
 ```go
 p := fastping.NewPinger()
-ra, err := net.ResolveIPAddr("ip4:icmp", os.Args[1])
+p.AddIP(os.Args[1])
+
+result, err := p.Run()
 if err != nil {
 	fmt.Println(err)
-	os.Exit(1)
-}
-p.AddIPAddr(ra)
-p.OnRecv = func(addr *net.IPAddr, rtt time.Duration) {
-	fmt.Printf("IP Addr: %s receive, RTT: %v\n", addr.String(), rtt)
-}
-p.OnIdle = func(lost map[string]*net.IPAddr) {
-	fmt.Println("lost:", lost)
-}
-err = p.Run()
-if err != nil {
-	fmt.Println(err)
+} else {
+	fmt.Printf("Result: %+v\n", result)
 }
 ```
 
-It sends an ICMP packet and wait a response. If it receives a response, it
-calls "receive" callback. After that, MaxRTT time passed, it calls "idle"
-callback. For more detail, refer [godoc][godoc] and if you need more example,
-please see "cmd/ping/ping.go".
+It sends an ICMP packet and wait a response. Result is map with ip->rtt, in case
+of loss rtt == -1
 
 ## Caution
 This package implements ICMP ping using both raw socket and UDP. If your program
@@ -49,10 +45,3 @@ uses this package in raw socket mode, it needs to be run as a root user.
 
 ## License
 go-fastping is under MIT License. See the [LICENSE][license] file for details.
-
-## Warning
-this is modified thread-unsafe version! for most purposes original
-https://github.com/tatsushid/go-fastping is much better!
-
-[godoc]: http://godoc.org/github.com/kanocz/go-fastping
-[license]: https://github.com/kanocz/go-fastping/blob/master/LICENSE
