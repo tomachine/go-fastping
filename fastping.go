@@ -68,10 +68,8 @@ var (
 	ipv6Proto = map[string]string{"ip": "ip6:ipv6-icmp", "udp": "udp6"}
 )
 
-func timeToBytes(t time.Time) []byte {
-	var result [8]byte
+func timeToBytes(t time.Time, result []byte) {
 	*(*int64)(unsafe.Pointer(&result[0])) = t.UnixNano()
-	return result[:]
 }
 
 func bytesToTime(b []byte) time.Time {
@@ -293,6 +291,8 @@ func (p *Pinger) run(skip map[string]bool) {
 	p.state = make([]int64, len(p.index))
 	p.counter = int32(len(p.index))
 	p.done = false
+	p.id = rand.Intn(0xffff)
+	p.seq = rand.Intn(0xffff)
 
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {
@@ -352,21 +352,15 @@ func (p *Pinger) run(skip map[string]bool) {
 }
 
 func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
-	type sendResult struct {
-		addr *net.IPAddr
-		err  error
-	}
-
-	p.id = rand.Intn(0xffff)
-	p.seq = rand.Intn(0xffff)
 
 	wg := new(sync.WaitGroup)
+	buf := make([]byte, p.Size)
 
 	sendPacket := func(from, to, chunk int) {
 		defer wg.Done()
 
 		for i := from; i < to; i++ {
-			if (chunk > 0) && (((i - from) % chunk) == 0) {
+			if (i > from) && (chunk > 0) && (((i - from) % chunk) == 0) {
 				time.Sleep(p.Sleep)
 			}
 
@@ -391,17 +385,13 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 				continue
 			}
 
-			t := timeToBytes(time.Now())
-
-			if p.Size-TimeSliceLength != 0 {
-				t = append(t, make([]byte, p.Size-TimeSliceLength)...)
-			}
+			timeToBytes(time.Now(), buf)
 
 			bytes, err := (&icmp.Message{
 				Type: typ, Code: 0,
 				Body: &icmp.Echo{
 					ID: p.id, Seq: p.seq,
-					Data: t,
+					Data: buf,
 				},
 			}).Marshal(nil)
 
@@ -435,7 +425,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 
 	total := len(p.index)
 
-	if total > (p.NumGoroutines * 8) {
+	if total > (p.NumGoroutines * 4) {
 
 		step := total/p.NumGoroutines + 1
 		chunk := p.Chunk/p.NumGoroutines + 1
@@ -468,7 +458,7 @@ func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGrou
 		}
 
 		bytes := make([]byte, 512)
-		conn.SetReadDeadline(time.Now().Add(time.Millisecond * 100))
+		conn.SetReadDeadline(time.Now().Add(time.Millisecond * 10))
 
 		_, ra, err := conn.ReadFrom(bytes)
 

@@ -185,7 +185,8 @@ func TestTimeToBytes(t *testing.T) {
 	if err != nil {
 		t.Errorf("time.Parse failed: %v", err)
 	}
-	b := timeToBytes(tm)
+	b := make([]byte, 8)
+	timeToBytes(tm, b)
 	for i := 0; i < 8; i++ {
 		if b[i] != expect[i] {
 			t.Errorf("timeToBytes failed: got %v, expected: %v", b, expect)
@@ -212,7 +213,8 @@ func TestTimeToBytesToTime(t *testing.T) {
 	if err != nil {
 		t.Errorf("time.Parse failed: %v", err)
 	}
-	b := timeToBytes(tm)
+	b := make([]byte, 8)
+	timeToBytes(tm, b)
 	tm2 := bytesToTime(b)
 	if !tm.Equal(tm2) {
 		t.Errorf("bytesToTime failed: got %v, expected: %v", tm2.UTC(), tm.UTC())
@@ -220,7 +222,9 @@ func TestTimeToBytesToTime(t *testing.T) {
 }
 
 func TestPayloadSizeDefault(t *testing.T) {
-	s := timeToBytes(time.Now())
+	s := make([]byte, 8)
+	timeToBytes(time.Now(), s)
+
 	d := append(s, make([]byte, 8-TimeSliceLength)...)
 
 	if len(d) != 8 {
@@ -229,7 +233,8 @@ func TestPayloadSizeDefault(t *testing.T) {
 }
 
 func TestPayloadSizeCustom(t *testing.T) {
-	s := timeToBytes(time.Now())
+	s := make([]byte, 8)
+	timeToBytes(time.Now(), s)
 	d := append(s, make([]byte, 64-TimeSliceLength)...)
 
 	if len(d) != 64 {
