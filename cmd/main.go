@@ -31,6 +31,8 @@ func main() {
 
 	totalCount := 0
 	rttSumm := time.Duration(0)
+	rttMin := time.Duration(0)
+	rttMax := time.Duration(0)
 
 	for i := uint64(0); i < count; i++ {
 		result, err := p.Run(map[string]bool{})
@@ -41,8 +43,15 @@ func main() {
 		if result[os.Args[1]] > 0 {
 			totalCount++
 			rttSumm += result[os.Args[1]]
+			if (rttMin == 0) || (rttMin > result[os.Args[1]]) {
+				rttMin = result[os.Args[1]]
+			}
+			if rttMax < result[os.Args[1]] {
+				rttMax = result[os.Args[1]]
+			}
 		}
 	}
 	fmt.Println(" done!")
-	fmt.Printf("Pings received %d/%d with avg rtt = %v\n", totalCount, count, rttSumm/time.Duration(totalCount))
+	fmt.Printf("Pings received %d/%d with rtt = %v/%v/%v\n", totalCount, count,
+		rttMin, rttSumm/time.Duration(totalCount), rttMax)
 }
