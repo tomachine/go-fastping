@@ -28,7 +28,7 @@ Import this package and write
 p := fastping.NewPinger()
 p.AddIP(os.Args[1])
 
-result, err := p.Run()
+result, err := p.Run(map[string]bool{})
 if err != nil {
 	fmt.Println(err)
 } else {

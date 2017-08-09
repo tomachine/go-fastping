@@ -292,6 +292,7 @@ func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
 func (p *Pinger) run(skip map[string]bool) {
 	p.state = make([]int64, len(p.index))
 	p.counter = int32(len(p.index))
+	p.done = false
 
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {
@@ -424,9 +425,9 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 							continue
 						}
 					}
+					p.state[i] = -2
+					atomic.AddInt32(&p.counter, -1)
 				}
-				p.state[i] = -2
-				atomic.AddInt32(&p.counter, -1)
 				break
 			}
 		}
