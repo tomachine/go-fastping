@@ -28,6 +28,7 @@ func main() {
 	}
 
 	p.MaxRTT = time.Second
+	p.Size = 56 // standard size
 
 	totalCount := 0
 	rttSumm := time.Duration(0)

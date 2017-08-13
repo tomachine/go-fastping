@@ -56,7 +56,7 @@ import (
 
 const (
 	// TimeSliceLength lenght of time slice in bytes
-	TimeSliceLength = 8
+	TimeSliceLength = unsafe.Sizeof(syscall.Timeval{})
 	// ProtocolICMP id of ICMP ip proto
 	ProtocolICMP = 1
 	// ProtocolIPv6ICMP id of ICMPv6 ip proto
@@ -68,15 +68,13 @@ var (
 	ipv6Proto = map[string]string{"ip": "ip6:ipv6-icmp", "udp": "udp6"}
 )
 
-func timeToBytes(t time.Time, result []byte) {
-	*(*int64)(unsafe.Pointer(&result[0])) = t.UnixNano()
+func updateBytesTime(buf []byte) {
+	syscall.Gettimeofday((*syscall.Timeval)(unsafe.Pointer(&buf[0])))
 }
 
 func bytesToTime(b []byte) time.Time {
-	var nsec int64
-	// better to check, but for performance reason we'll not do this
-	nsec = *(*int64)(unsafe.Pointer(&b[0]))
-	return time.Unix(nsec/1000000000, nsec%1000000000)
+	sec, nsec := ((*syscall.Timeval)(unsafe.Pointer(&b[0]))).Unix()
+	return time.Unix(sec, nsec)
 }
 
 func isIPv4(ip net.IP) bool {
@@ -160,7 +158,7 @@ func NewPinger() *Pinger {
 		source6:       "",
 		hasIPv4:       false,
 		hasIPv6:       false,
-		Size:          TimeSliceLength,
+		Size:          int(TimeSliceLength),
 		MaxRTT:        time.Second,
 		NumGoroutines: runtime.NumCPU(),
 	}
@@ -356,6 +354,11 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 	wg := new(sync.WaitGroup)
 	buf := make([]byte, p.Size)
 
+	// prefill payload as usual ping command do
+	for i := uint16(TimeSliceLength); i < uint16(p.Size); i++ {
+		buf[i] = byte(i & 0xff)
+	}
+
 	sendPacket := func(from, to, chunk int) {
 		defer wg.Done()
 
@@ -385,7 +388,7 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 				continue
 			}
 
-			timeToBytes(time.Now(), buf)
+			updateBytesTime(buf)
 
 			bytes, err := (&icmp.Message{
 				Type: typ, Code: 0,
@@ -443,16 +446,18 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 	} else {
 		wg.Add(1)
 		sendPacket(0, total, p.Chunk)
+		wg.Wait()
 	}
 
 }
 
 func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGroup) {
 
+	defer wg.Done()
+
 	for {
 		select {
 		case <-ctx.stop:
-			wg.Done()
 			return
 		default:
 		}
@@ -475,7 +480,6 @@ func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGrou
 					}
 					ctx.err = err
 					p.mu.Unlock()
-					wg.Done()
 					return
 				}
 			}
@@ -527,8 +531,8 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 	var rtt time.Duration
 	switch pkt := m.Body.(type) {
 	case *icmp.Echo:
-		if pkt.ID == p.id && pkt.Seq == p.seq {
-			rtt = time.Since(bytesToTime(pkt.Data[:TimeSliceLength]))
+		if pkt.ID == p.id && pkt.Seq == p.seq && len(pkt.Data) >= int(TimeSliceLength) {
+			rtt = time.Since(bytesToTime(pkt.Data))
 		}
 	default:
 		return
