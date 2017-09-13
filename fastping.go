@@ -328,20 +328,17 @@ func (p *Pinger) run(skip map[string]bool) {
 
 	p.sendICMP(conn, conn6, skip)
 
-	ticker := time.NewTicker(p.MaxRTT)
-
 	select {
 	case <-recvCtx.done:
-		p.ctx.err = recvCtx.err
-	case <-ticker.C:
+	case <-time.After(p.MaxRTT):
 	}
-
-	ticker.Stop()
 
 	close(recvCtx.stop)
 	wg.Wait()
 
 	p.mu.Lock()
+	p.ctx.err = recvCtx.err
+
 	if !p.done {
 		p.done = true
 		close(p.ctx.done)
@@ -455,6 +452,8 @@ func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGrou
 
 	defer wg.Done()
 
+	bytes := make([]byte, 512)
+
 	for {
 		select {
 		case <-ctx.stop:
@@ -462,8 +461,7 @@ func (p *Pinger) recvICMP(conn *icmp.PacketConn, ctx *context, wg *sync.WaitGrou
 		default:
 		}
 
-		bytes := make([]byte, 512)
-		conn.SetReadDeadline(time.Now().Add(time.Millisecond * 10))
+		conn.SetReadDeadline(time.Now().Add(time.Millisecond * 50))
 
 		_, ra, err := conn.ReadFrom(bytes)
 
