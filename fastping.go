@@ -430,8 +430,8 @@ func (p *Pinger) sendICMP(conn, conn6 *icmp.PacketConn, skip map[string]bool) {
 		step := total/p.NumGoroutines + 1
 		chunk := p.Chunk/p.NumGoroutines + 1
 
-		wg.Add(p.NumGoroutines)
 		for i := 0; i < total; i += step {
+			wg.Add(1)
 			to := i + step
 			if to > total {
 				to = total
