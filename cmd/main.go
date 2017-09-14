@@ -11,8 +11,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Printf("Usage: %s <IP> <count>\n", os.Args[0])
+	if len(os.Args) != 4 {
+		fmt.Printf("Usage: %s <IP> <count> <source>\n", os.Args[0])
 		return
 	}
 
@@ -29,6 +29,7 @@ func main() {
 
 	p.MaxRTT = time.Second
 	p.Size = 56 // standard size
+	p.Source(os.Args[3])
 
 	totalCount := 0
 	rttSumm := time.Duration(0)
