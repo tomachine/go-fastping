@@ -148,9 +148,8 @@ type Pinger struct {
 func NewPinger() *Pinger {
 	rand.Seed(time.Now().UnixNano())
 	return &Pinger{
-		id:  rand.Intn(0xffff),
-		seq: rand.Intn(0xffff),
-		// addrs:         make(map[string]*net.IPAddr),
+		id:            0,
+		seq:           0,
 		paddr:         []*net.IPAddr{},
 		index:         make(map[string]int),
 		network:       "ip",
@@ -263,8 +262,10 @@ func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
 // it receives a response, it calls "receive" handler registered by AddHander().
 // After MaxRTT seconds, it calls "idle" handler and returns to caller with
 // an error value. It means it blocks until MaxRTT seconds passed.
-func (p *Pinger) Run(skip map[string]bool) (map[string]time.Duration, error) {
+func (p *Pinger) Run(skip map[string]bool, id int, seq int) (map[string]time.Duration, error) {
 	p.ctx = newContext()
+	p.id = id
+	p.seq = seq
 	p.run(skip)
 
 	result := make(map[string]time.Duration, len(p.index))
@@ -289,8 +290,10 @@ func (p *Pinger) run(skip map[string]bool) {
 	p.state = make([]int64, len(p.index))
 	p.counter = int32(len(p.index))
 	p.done = false
-	p.id = rand.Intn(0xffff)
-	p.seq = rand.Intn(0xffff)
+	if 0 == p.id && 0 == p.seq {
+		p.id = rand.Intn(0xffff)
+		p.seq = rand.Intn(0xffff)
+	}
 
 	var conn, conn6 *icmp.PacketConn
 	if p.hasIPv4 {

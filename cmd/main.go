@@ -37,7 +37,7 @@ func main() {
 	rttMax := time.Duration(0)
 
 	for i := uint64(0); i < count; i++ {
-		result, err := p.Run(map[string]bool{})
+		result, err := p.Run(map[string]bool{}, 0, 0)
 		if err != nil {
 			log.Fatalln("Pinger error:", err)
 		}
