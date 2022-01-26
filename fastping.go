@@ -257,6 +257,33 @@ func (p *Pinger) AddIPAddr(ip *net.IPAddr) {
 	}
 }
 
+// RemoveIP removes an IP address from Pinger. ipaddr arg should be a string
+// like "192.0.2.1".
+func (p *Pinger) RemoveIP(ipaddr string) error {
+	addr := net.ParseIP(ipaddr)
+	if addr == nil {
+		return fmt.Errorf("%s is not a valid textual representation of an IP address", ipaddr)
+	}
+	p.mu.Lock()
+	delete(p.index, addr.String())
+
+	for index, address := range p.paddr {
+		if address.String() == ipaddr {
+			p.paddr = append(p.paddr[:index], p.paddr[index+1:]...)
+		}
+	}
+
+	for index, addressString := range p.pstring {
+		if addressString == ipaddr {
+			p.pstring = append(p.pstring[:index], p.pstring[index+1:]...)
+		}
+	}
+
+	p.mu.Unlock()
+
+	return nil
+}
+
 // Run invokes a single send/receive procedure. It sends packets to all hosts
 // which have already been added by AddIP() etc. and wait those responses. When
 // it receives a response, it calls "receive" handler registered by AddHander().
