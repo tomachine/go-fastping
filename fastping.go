@@ -264,22 +264,13 @@ func (p *Pinger) RemoveIP(ipaddr string) error {
 	if addr == nil {
 		return fmt.Errorf("%s is not a valid textual representation of an IP address", ipaddr)
 	}
-	p.mu.Lock()
+
+	index := p.index[ipaddr]
+
+	p.paddr = append(p.paddr[:index], p.paddr[index+1:]...)
+	p.pstring = append(p.pstring[:index], p.pstring[index+1:]...)
+
 	delete(p.index, addr.String())
-
-	for index, address := range p.paddr {
-		if address.String() == ipaddr {
-			p.paddr = append(p.paddr[:index], p.paddr[index+1:]...)
-		}
-	}
-
-	for index, addressString := range p.pstring {
-		if addressString == ipaddr {
-			p.pstring = append(p.pstring[:index], p.pstring[index+1:]...)
-		}
-	}
-
-	p.mu.Unlock()
 
 	return nil
 }
