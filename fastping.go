@@ -272,6 +272,8 @@ func (p *Pinger) RemoveIP(ipaddr string) error {
 
 	delete(p.index, addr.String())
 
+	p.updateIndexes()
+
 	return nil
 }
 
@@ -568,5 +570,13 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 		}
 
 		p.mu.Unlock()
+	}
+}
+
+func (p *Pinger) updateIndexes() {
+	for ip := range p.index {
+		newIndex := 0
+		p.index[ip] = newIndex
+		newIndex++
 	}
 }
