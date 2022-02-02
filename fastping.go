@@ -574,9 +574,7 @@ func (p *Pinger) procRecv(bytes []byte, ra net.Addr, ctx *context) {
 }
 
 func (p *Pinger) updateIndexes() {
-	for ip := range p.index {
-		newIndex := 0
-		p.index[ip] = newIndex
-		newIndex++
+	for index, ip := range p.pstring {
+		p.index[ip] = index
 	}
 }
